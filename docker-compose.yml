@@ -1,0 +1,192 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-sismowatch_admin}:${POSTGRES_PASSWORD:-sismowatch_secure_pass_2026}@postgres:5432/${POSTGRES_DB:-sismowatch}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqnzq8=}
+    AIRFLOW__CORE__SECRET_KEY: ${AIRFLOW__CORE__SECRET_KEY:-sismowatch_airflow_super_secret_webserver_key_2026}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+    PYTHONPATH: /opt/airflow:/opt/airflow/include
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+    POSTGRES_DB: ${POSTGRES_DB:-sismowatch}
+    POSTGRES_USER: ${POSTGRES_USER:-sismowatch_admin}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sismowatch_secure_pass_2026}
+    POSTGRES_APP_USER: ${POSTGRES_APP_USER:-sismowatch_app}
+    POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-sismowatch_app_pass_2026}
+    LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
+    LLM_MODEL: ${LLM_MODEL:-deterministic-v1}
+    LLM_API_KEY: ${LLM_API_KEY:-}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/include:/opt/airflow/include
+    - airflow_logs:/opt/airflow/logs
+  networks:
+    - sismowatch-network
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL Database (raw, staging, curated layers)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: sismowatch-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sismowatch}
+      POSTGRES_USER: ${POSTGRES_USER:-sismowatch_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sismowatch_secure_pass_2026}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sismowatch_admin} -d ${POSTGRES_DB:-sismowatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sismowatch-network
+
+  # ----------------------------------------------------------------------------
+  # Airflow Init (Runs migrations and creates admin user)
+  # ----------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    container_name: sismowatch-airflow-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username "${_AIRFLOW_WWW_USER_USERNAME:-admin}" \
+          --password "${_AIRFLOW_WWW_USER_PASSWORD:-admin_sismowatch_2026}" \
+          --firstname Admin \
+          --lastname SismoWatch \
+          --role Admin \
+          --email admin@sismowatch.internal || true
+    restart: "no"
+
+  # ----------------------------------------------------------------------------
+  # Airflow Webserver (UI on port 8080)
+  # ----------------------------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: sismowatch-airflow-webserver
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      - "${AIRFLOW_PORT:-8080}:8080"
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # Airflow Scheduler (Runs DAGs: Ingestion, Transformation, AI Reports)
+  # ----------------------------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: sismowatch-airflow-scheduler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # FastAPI Backend (REST & SSE endpoints)
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: sismowatch-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-sismowatch}
+      POSTGRES_USER: ${POSTGRES_USER:-sismowatch_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sismowatch_secure_pass_2026}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-sismowatch_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-sismowatch_app_pass_2026}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-sismowatch_jwt_super_secret_signing_key_change_in_production_2026}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-AdminSecure2026!}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@sismowatch.internal}
+      ADMIN_FULL_NAME: ${ADMIN_FULL_NAME:-System Administrator}
+      VIEWER_USERNAME: ${VIEWER_USERNAME:-viewer}
+      VIEWER_PASSWORD: ${VIEWER_PASSWORD:-ViewerSecure2026!}
+      VIEWER_EMAIL: ${VIEWER_EMAIL:-viewer@sismowatch.internal}
+      VIEWER_FULL_NAME: ${VIEWER_FULL_NAME:-Risk Analyst Viewer}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173}
+      AIRFLOW_URL: http://airflow-webserver:8080
+      LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
+      LLM_MODEL: ${LLM_MODEL:-deterministic-v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sismowatch-network
+
+  # ----------------------------------------------------------------------------
+  # React + Vite Frontend (Served by Nginx)
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: sismowatch-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - sismowatch-network
+
+volumes:
+  postgres_data:
+  airflow_logs:
+
+networks:
+  sismowatch-network:
+    driver: bridge
