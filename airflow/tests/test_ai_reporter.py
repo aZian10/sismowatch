@@ -76,3 +76,50 @@ def test_call_external_llm_falls_back_when_offline(monkeypatch):
     
     result = call_external_llm("Generate a report")
     assert result is None
+
+def test_ollama_local_model_success(monkeypatch):
+    """Verifies that Ollama JSON response is parsed into DailyReportSchema with token metadata."""
+    import requests
+    from unittest.mock import MagicMock
+    from include.ai_reporter import call_llm_provider
+
+    monkeypatch.setattr("include.ai_reporter.LLM_PROVIDER", "ollama")
+    monkeypatch.setattr("include.ai_reporter.LLM_MODEL", "qwen2.5:0.5b")
+    monkeypatch.setattr("include.ai_reporter.LLM_BASE_URL", "http://ollama:11434")
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "message": {
+            "content": '{"title": "Local AI Report", "executive_summary": "Summary of 42 quakes.", "narrative_report": "Detailed narrative."}'
+        },
+        "prompt_eval_count": 50,
+        "eval_count": 80
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    monkeypatch.setattr(requests, "post", lambda url, **kwargs: mock_resp)
+
+    res = call_llm_provider("Prompt content")
+    assert res is not None
+    schema, prompt_tok, eval_tok = res
+    assert isinstance(schema, DailyReportSchema)
+    assert schema.title == "Local AI Report"
+    assert schema.executive_summary == "Summary of 42 quakes."
+    assert prompt_tok == 50
+    assert eval_tok == 80
+
+def test_ollama_local_model_offline_fallback(monkeypatch):
+    """Verifies that when Ollama is unreachable, it logs a warning and returns None (triggering fallback)."""
+    import requests
+    from include.ai_reporter import call_llm_provider
+
+    monkeypatch.setattr("include.ai_reporter.LLM_PROVIDER", "ollama")
+    monkeypatch.setattr("include.ai_reporter.LLM_BASE_URL", "http://non-existent-host:11434")
+
+    def mock_fail(*args, **kwargs):
+        raise requests.ConnectionError("Connection refused")
+
+    monkeypatch.setattr(requests, "post", mock_fail)
+
+    res = call_llm_provider("Prompt content")
+    assert res is None

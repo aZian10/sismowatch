@@ -89,9 +89,29 @@ The system initializes automatically:
 | **FastAPI Interactive Docs** | [http://localhost:8000/docs](http://localhost:8000/docs) | Bearer Token | Authenticate via `/auth/login` |
 | **FastAPI OpenAPI Schema** | [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json) | Public | — |
 | **Airflow Web UI** | [http://localhost:8080](http://localhost:8080) | `admin` | `admin_sismowatch_2026` |
+| **Ollama Local AI API** | [http://localhost:11434](http://localhost:11434) | Model Runner | `qwen2.5:0.5b` |
 
 > [!NOTE]
 > The login screen includes **Quick-Fill** buttons for both `admin` and `viewer` accounts for ease of evaluation.
+
+---
+
+## AI Narrative Reporting & Local Model Setup
+
+SismoWatch integrates a containerized **Ollama** service for 100% private, zero-cost, local LLM execution, with automatic deterministic fallback if offline:
+
+| Provider | `LLM_PROVIDER` | `LLM_MODEL` | `LLM_BASE_URL` | Description |
+|---|---|---|---|---|
+| **Ollama (Default)** | `ollama` | `qwen2.5:0.5b` | `http://ollama:11434` | Local model running in Docker (~397 MB) |
+| **Local OpenAI-Compatible** | `local` | `your-model` | `http://localhost:11434/v1` | Supports vLLM, LM Studio, llama.cpp |
+| **OpenAI** | `openai` | `gpt-4o-mini` | `https://api.openai.com/v1` | Requires `LLM_API_KEY` |
+| **Deterministic Fallback** | `deterministic` | `deterministic-v1` | — | Pure SQL/Python statistical reporter |
+
+To pull or switch local models within the container:
+
+```bash
+docker exec -it sismowatch-ollama ollama pull qwen2.5:0.5b
+```
 
 ---
 

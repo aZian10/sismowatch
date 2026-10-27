@@ -41,3 +41,9 @@ CORS_ORIGINS: List[str] = [origin.strip() for origin in raw_cors.split(",") if o
 
 # Airflow Integration
 AIRFLOW_URL = os.getenv("AIRFLOW_URL", "http://airflow-webserver:8080")
+
+# LLM Configuration
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:0.5b")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://ollama:11434")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")

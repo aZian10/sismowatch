@@ -42,11 +42,12 @@ QUALITY_THRESHOLDS = {
 }
 
 # LLM Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deterministic").lower()
-LLM_MODEL = os.getenv("LLM_MODEL", "deterministic-v1")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:0.5b")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://ollama:11434")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "15"))
+LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 # Anomaly Detection Settings
 ANOMALY_Z_THRESHOLD = float(os.getenv("ANOMALY_Z_THRESHOLD", "2.5"))

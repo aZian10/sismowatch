@@ -17,12 +17,12 @@ import requests
 
 try:
     from include.config import (
-        LLM_PROVIDER, LLM_MODEL, LLM_API_KEY, LLM_TIMEOUT_SECONDS, LLM_TEMPERATURE
+        LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL, LLM_API_KEY, LLM_TIMEOUT_SECONDS, LLM_TEMPERATURE
     )
     from include.database import get_db_connection
 except ImportError:
     from airflow.include.config import (
-        LLM_PROVIDER, LLM_MODEL, LLM_API_KEY, LLM_TIMEOUT_SECONDS, LLM_TEMPERATURE
+        LLM_PROVIDER, LLM_MODEL, LLM_BASE_URL, LLM_API_KEY, LLM_TIMEOUT_SECONDS, LLM_TEMPERATURE
     )
     from airflow.include.database import get_db_connection
 
@@ -194,34 +194,91 @@ def generate_deterministic_report(stats: Dict[str, Any]) -> DailyReportSchema:
         narrative_report=narrative
     )
 
-def call_external_llm(prompt_text: str) -> Optional[DailyReportSchema]:
-    """Attempts to query external LLM API if configured."""
-    if not LLM_API_KEY or LLM_PROVIDER in ("deterministic", "mock"):
+def call_llm_provider(prompt_text: str) -> Optional[Tuple[DailyReportSchema, int, int]]:
+    """
+    Attempts to query the configured LLM provider (Ollama, local, OpenAI).
+    Returns (DailyReportSchema, prompt_tokens, completion_tokens) or None on failure.
+    """
+    if LLM_PROVIDER in ("deterministic", "mock"):
         return None
-        
+
     try:
-        if LLM_PROVIDER == "openai":
-            headers = {
-                "Authorization": f"Bearer {LLM_API_KEY}",
-                "Content-Type": "application/json"
-            }
+        if LLM_PROVIDER == "ollama":
+            url = f"{LLM_BASE_URL.rstrip('/')}/api/chat"
             body = {
-                "model": LLM_MODEL or "gpt-4o-mini",
+                "model": LLM_MODEL or "qwen2.5:0.5b",
                 "messages": [
-                    {"role": "system", "content": "You are a professional seismology reporter. Return strict JSON only."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a professional seismologist for SismoWatch. "
+                            "You MUST respond ONLY with a valid JSON object matching this schema: "
+                            '{"title": string, "executive_summary": string, "narrative_report": string}. '
+                            "Do not include markdown codeblocks or preamble text. "
+                            "State only verified facts from the provided figures; never invent numbers."
+                        )
+                    },
+                    {"role": "user", "content": prompt_text}
+                ],
+                "format": "json",
+                "stream": False,
+                "options": {
+                    "temperature": LLM_TEMPERATURE
+                }
+            }
+            res = requests.post(url, json=body, timeout=LLM_TIMEOUT_SECONDS)
+            res.raise_for_status()
+            data = res.json()
+            content = data["message"]["content"]
+            parsed = json.loads(content)
+            schema = DailyReportSchema(**parsed)
+            prompt_tokens = data.get("prompt_eval_count", len(prompt_text.split()))
+            eval_tokens = data.get("eval_count", len(schema.narrative_report.split()))
+            return schema, prompt_tokens, eval_tokens
+
+        elif LLM_PROVIDER in ("openai", "local", "openai_compatible", "vllm"):
+            base_url = LLM_BASE_URL.rstrip('/') if LLM_PROVIDER != "openai" else "https://api.openai.com/v1"
+            url = f"{base_url}/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            if LLM_API_KEY:
+                headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+            body = {
+                "model": LLM_MODEL or ("gpt-4o-mini" if LLM_PROVIDER == "openai" else "local-model"),
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a professional seismologist for SismoWatch. "
+                            "Return a strict JSON object with fields: 'title', 'executive_summary', 'narrative_report'."
+                        )
+                    },
                     {"role": "user", "content": prompt_text}
                 ],
                 "response_format": {"type": "json_object"},
                 "temperature": LLM_TEMPERATURE
             }
-            res = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=body, timeout=LLM_TIMEOUT_SECONDS)
+            res = requests.post(url, headers=headers, json=body, timeout=LLM_TIMEOUT_SECONDS)
             res.raise_for_status()
             content = res.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-            return DailyReportSchema(**parsed)
+            schema = DailyReportSchema(**parsed)
+            usage = res.json().get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", len(prompt_text.split()))
+            eval_tokens = usage.get("completion_tokens", len(schema.narrative_report.split()))
+            return schema, prompt_tokens, eval_tokens
+
     except Exception as e:
-        logger.warning(f"External LLM call failed ({e}). Falling back to deterministic generator.")
+        logger.warning(f"LLM call to provider '{LLM_PROVIDER}' failed ({e}). Falling back to deterministic generator.")
         return None
+
+    return None
+
+def call_external_llm(prompt_text: str) -> Optional[DailyReportSchema]:
+    """Compatibility wrapper returning just DailyReportSchema or None."""
+    res = call_llm_provider(prompt_text)
+    if res:
+        return res[0]
+    return None
 
 def build_daily_report(target_date: Optional[date] = None, force_regenerate: bool = False) -> Dict[str, Any]:
     """
@@ -261,14 +318,27 @@ def build_daily_report(target_date: Optional[date] = None, force_regenerate: boo
     model_used = LLM_MODEL
     
     report_obj = None
-    if LLM_PROVIDER not in ("deterministic", "mock") and LLM_API_KEY:
-        report_obj = call_external_llm(prompt_text)
+    input_tokens = len(prompt_text.split())
+    output_tokens = 0
+    estimated_cost = 0.0
+
+    if LLM_PROVIDER in ("ollama", "local", "openai_compatible") or (LLM_PROVIDER not in ("deterministic", "mock") and LLM_API_KEY):
+        llm_result = call_llm_provider(prompt_text)
+        if llm_result:
+            report_obj, in_tokens, out_tokens = llm_result
+            input_tokens = in_tokens
+            output_tokens = out_tokens
+            if LLM_PROVIDER == "openai":
+                estimated_cost = (input_tokens * 0.00000015) + (output_tokens * 0.0000006)
+            else:
+                estimated_cost = 0.0  # Local models incur zero API cost
         
     if report_obj is None:
         report_obj = generate_deterministic_report(stats)
         is_fallback = True
-        provider_used = "deterministic_fallback"
+        provider_used = "deterministic_fallback" if LLM_PROVIDER != "deterministic" else "deterministic"
         model_used = "deterministic-engine-v1"
+        output_tokens = len(report_obj.narrative_report.split())
         
     latency_ms = int((time.time() - start_time) * 1000)
     
@@ -311,8 +381,8 @@ def build_daily_report(target_date: Optional[date] = None, force_regenerate: boo
                 provider_used,
                 model_used,
                 latency_ms,
-                250 if not is_fallback else 0,
-                0.0005 if not is_fallback else 0.0,
+                (input_tokens + output_tokens) if not is_fallback else 0,
+                estimated_cost,
                 is_fallback
             ))
             report_id = cur.fetchone()["id"]
@@ -323,9 +393,9 @@ def build_daily_report(target_date: Optional[date] = None, force_regenerate: boo
                 provider_used,
                 model_used,
                 latency_ms,
-                len(prompt_text.split()),
-                len(report_obj.narrative_report.split()),
-                0.0005 if not is_fallback else 0.0,
+                input_tokens,
+                output_tokens,
+                estimated_cost,
                 "fallback" if is_fallback else "success",
                 "daily_report_v1"
             ))

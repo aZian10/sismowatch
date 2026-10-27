@@ -18,9 +18,12 @@ x-airflow-common: &airflow-common
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sismowatch_secure_pass_2026}
     POSTGRES_APP_USER: ${POSTGRES_APP_USER:-sismowatch_app}
     POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-sismowatch_app_pass_2026}
-    LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
-    LLM_MODEL: ${LLM_MODEL:-deterministic-v1}
+    LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+    LLM_MODEL: ${LLM_MODEL:-qwen2.5:0.5b}
+    LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434}
     LLM_API_KEY: ${LLM_API_KEY:-}
+    LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+    LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/include:/opt/airflow/include
@@ -149,11 +152,17 @@ services:
       VIEWER_FULL_NAME: ${VIEWER_FULL_NAME:-Risk Analyst Viewer}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173}
       AIRFLOW_URL: http://airflow-webserver:8080
-      LLM_PROVIDER: ${LLM_PROVIDER:-deterministic}
-      LLM_MODEL: ${LLM_MODEL:-deterministic-v1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:0.5b}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./api:/app/api
+      - ./airflow/include:/app/airflow/include
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8000/health"]
       interval: 10s
@@ -186,9 +195,24 @@ services:
     networks:
       - sismowatch-network
 
+  # ----------------------------------------------------------------------------
+  # Local AI Model Server (Ollama)
+  # ----------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sismowatch-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - sismowatch-network
+
 volumes:
   postgres_data:
   airflow_logs:
+  ollama_data:
 
 networks:
   sismowatch-network:

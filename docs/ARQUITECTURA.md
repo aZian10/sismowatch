@@ -291,12 +291,16 @@ Authorization is strictly enforced in FastAPI route dependencies (`require_admin
 
 ## 8. AI Narrative Reports & Anomaly Detection
 
-### A. Anti-Hallucination & Grounding Guarantee
+### A. Local AI Model & Anti-Hallucination Grounding
 Large Language Models must **never invent** seismic numbers, epicenters, or casualties:
-1. **Prior Calculation**: All statistics (event count, max magnitude, mean magnitude, tsunami flag count, significant events, and top active regions) are calculated deterministically in PostgreSQL and Python **before** composing the prompt.
-2. **Strict Grounding Prompt**: The prompt explicitly instructs the model to rely solely on the provided figures and forbids any extrapolation.
-3. **Structured Pydantic Validation**: Output is validated against `DailyReportSchema(title, executive_summary, narrative_report)`.
-4. **Deterministic Fallback**: If the external LLM provider fails, times out, or returns non-conforming JSON, the system immediately invokes `generate_deterministic_report()`. The pipeline never breaks, and the report is labeled with `is_fallback = TRUE`.
+1. **Local Model Execution via Ollama**:
+   - The platform bundles a containerized **Ollama** service (`sismowatch-ollama`) configured with the lightweight `qwen2.5:0.5b` model (~397 MB).
+   - This provides **100% offline, zero-cost, private execution** without sending seismic intelligence or operational data to external third parties.
+   - Also supports OpenAI, OpenAI-compatible local APIs (`vLLM`, `llama.cpp`), or Google Gemini via standard environment variables.
+2. **Prior Calculation**: All statistics (event count, max magnitude, mean magnitude, tsunami flag count, significant events, and top active regions) are calculated deterministically in PostgreSQL and Python **before** composing the prompt.
+3. **Strict Grounding Prompt**: The prompt explicitly instructs the model to rely solely on the provided figures and forbids any extrapolation.
+4. **Structured Pydantic Validation**: Output is validated against `DailyReportSchema(title, executive_summary, narrative_report)`.
+5. **Deterministic Fallback**: If the configured local or external LLM provider fails, times out, or returns non-conforming JSON, the system immediately invokes `generate_deterministic_report()`. The pipeline never breaks, and the report is labeled with `is_fallback = TRUE`.
 
 ### B. Statistical Anomaly Detection (Deterministic)
 The system calculates rolling hourly activity statistics over a 48–72 hour baseline:
