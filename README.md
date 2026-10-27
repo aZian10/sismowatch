@@ -211,3 +211,4 @@ zip -r sismowatch_delivery.zip . \
 1. **Airflow Scale**: Currently configured with `LocalExecutor` on a single container. In enterprise production, migrate to `KubernetesExecutor` on AWS EKS or GCP GKE.
 2. **Geospatial Storage**: Coordinates are currently stored as numeric lat/lon. Adding PostGIS spatial indexing (`ST_Point`) will unlock sub-millisecond polygon containment queries.
 3. **Push-Notification Tier**: Add WebSocket or webhook integration to notify third-party operations systems when critical anomaly alerts occur.
+
