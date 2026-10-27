@@ -30,16 +30,31 @@ export const EventMap: React.FC<EventMapProps> = ({ events, selectedEventId, onS
         zoomControl: true,
       });
 
-      // Dark CARTO basemap with authenticated API key
-      const tileUrl = CARTO_API_KEY
-        ? `https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?api_key=${encodeURIComponent(CARTO_API_KEY)}`
+      // Dark CARTO basemap with authenticated API key (CARTO expects ?key=...)
+      const cartoTileUrl = CARTO_API_KEY
+        ? `https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(CARTO_API_KEY)}&api_key=${encodeURIComponent(CARTO_API_KEY)}`
         : 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png';
 
-      L.tileLayer(tileUrl, {
+      const cartoDarkLayer = L.tileLayer(cartoTileUrl, {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
         subdomains: 'abcd',
         maxZoom: 19
-      }).addTo(map);
+      });
+
+      // Redundant fallback basemap (OpenStreetMap standard, no API key needed)
+      const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+        maxZoom: 19
+      });
+
+      // Add default dark layer
+      cartoDarkLayer.addTo(map);
+
+      // Layer switcher control in top right
+      L.control.layers({
+        'CARTO Dark Matter': cartoDarkLayer,
+        'OpenStreetMap': osmLayer
+      }, undefined, { position: 'topright' }).addTo(map);
 
       markersLayerRef.current = L.layerGroup().addTo(map);
       mapInstanceRef.current = map;
