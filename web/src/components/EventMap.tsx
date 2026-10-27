@@ -3,6 +3,8 @@ import { EarthquakeEvent } from '../types';
 
 declare const L: any;
 
+const CARTO_API_KEY = (import.meta.env.VITE_CARTO_API_KEY as string) || 'cb1_4vxo_1_10262ecdf4f01ddd335143ec';
+
 interface EventMapProps {
   events: EarthquakeEvent[];
   selectedEventId?: string | null;
@@ -28,9 +30,13 @@ export const EventMap: React.FC<EventMapProps> = ({ events, selectedEventId, onS
         zoomControl: true,
       });
 
-      // Dark CartoDB basemap
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      // Dark CARTO basemap with authenticated API key
+      const tileUrl = CARTO_API_KEY
+        ? `https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?api_key=${encodeURIComponent(CARTO_API_KEY)}`
+        : 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png';
+
+      L.tileLayer(tileUrl, {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>',
         subdomains: 'abcd',
         maxZoom: 19
       }).addTo(map);
